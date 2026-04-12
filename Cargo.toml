@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 authors = ["Corentin Henry <corentinhenry@gmail.com>"]
 name = "netlink-packet-route"
