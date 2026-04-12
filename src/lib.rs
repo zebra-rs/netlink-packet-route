@@ -2,6 +2,7 @@
 
 pub mod address;
 pub mod link;
+pub mod mdb;
 pub mod neighbour;
 pub mod neighbour_table;
 pub mod nexthop;

@@ -8,6 +8,7 @@ use netlink_packet_utils::{
     DecodeError, Emitable, Parseable, ParseableParametrized,
 };
 
+use crate::mdb::{MdbMessage, MdbMessageBuffer};
 use crate::nexthop::{NexthopMessage, NexthopMessageBuffer};
 use crate::tc::{TcActionMessage, TcActionMessageBuffer};
 use crate::{
@@ -65,9 +66,9 @@ const RTM_SETNEIGHTBL: u16 = 67;
 // const RTM_NEWNETCONF: u16 = 80;
 // const RTM_DELNETCONF: u16 = 81;
 // const RTM_GETNETCONF: u16 = 82;
-// const RTM_NEWMDB: u16 = 84;
-// const RTM_DELMDB: u16 = 85;
-// const RTM_GETMDB: u16 = 86;
+const RTM_NEWMDB: u16 = 84;
+const RTM_DELMDB: u16 = 85;
+const RTM_GETMDB: u16 = 86;
 const RTM_NEWNSID: u16 = 88;
 const RTM_DELNSID: u16 = 89;
 const RTM_GETNSID: u16 = 90;
@@ -342,6 +343,22 @@ impl<'a, T: AsRef<[u8]> + ?Sized>
                 }
             }
 
+            // MDB Messages
+            RTM_NEWMDB | RTM_DELMDB | RTM_GETMDB => {
+                let err = "invalid MDB message";
+                let msg = MdbMessage::parse(
+                    &MdbMessageBuffer::new_checked(&buf.inner())
+                        .context(err)?,
+                )
+                .context(err)?;
+                match message_type {
+                    RTM_NEWMDB => RouteNetlinkMessage::NewMdb(msg),
+                    RTM_DELMDB => RouteNetlinkMessage::DelMdb(msg),
+                    RTM_GETMDB => RouteNetlinkMessage::GetMdb(msg),
+                    _ => unreachable!(),
+                }
+            }
+
             _ => {
                 return Err(
                     format!("Unknown message type: {message_type}").into()
@@ -389,6 +406,9 @@ pub enum RouteNetlinkMessage {
     NewTrafficChain(TcMessage),
     DelTrafficChain(TcMessage),
     GetTrafficChain(TcMessage),
+    NewMdb(MdbMessage),
+    DelMdb(MdbMessage),
+    GetMdb(MdbMessage),
     NewNexthop(NexthopMessage),
     DelNexthop(NexthopMessage),
     GetNexthop(NexthopMessage),
@@ -561,6 +581,18 @@ impl RouteNetlinkMessage {
         matches!(self, RouteNetlinkMessage::DelNexthop(_))
     }
 
+    pub fn is_new_mdb(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::NewMdb(_))
+    }
+
+    pub fn is_del_mdb(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::DelMdb(_))
+    }
+
+    pub fn is_get_mdb(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::GetMdb(_))
+    }
+
     pub fn message_type(&self) -> u16 {
         use self::RouteNetlinkMessage::*;
 
@@ -608,6 +640,9 @@ impl RouteNetlinkMessage {
             NewNexthop(_) => RTM_NEWNEXTHOP,
             DelNexthop(_) => RTM_DELNEXTHOP,
             GetNexthop(_) => RTM_GETNEXTHOP,
+            NewMdb(_) => RTM_NEWMDB,
+            DelMdb(_) => RTM_DELMDB,
+            GetMdb(_) => RTM_GETMDB,
         }
     }
 }
@@ -680,6 +715,11 @@ impl Emitable for RouteNetlinkMessage {
             | DelNexthop(ref msg)
             | GetNexthop(ref msg)
             => msg.buffer_len(),
+
+            | NewMdb(ref msg)
+            | DelMdb(ref msg)
+            | GetMdb(ref msg)
+            => msg.buffer_len(),
 }
     }
 
@@ -749,6 +789,11 @@ impl Emitable for RouteNetlinkMessage {
             | NewNexthop(ref msg)
             | DelNexthop(ref msg)
             | GetNexthop(ref msg)
+            => msg.emit(buffer),
+
+            | NewMdb(ref msg)
+            | DelMdb(ref msg)
+            | GetMdb(ref msg)
             => msg.emit(buffer),
 }
     }
