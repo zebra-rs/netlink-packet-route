@@ -9,7 +9,11 @@ use netlink_packet_utils::{
 };
 
 use super::{NeighbourAddress, NeighbourCacheInfo, NeighbourCacheInfoBuffer};
-use crate::{route::RouteProtocol, AddressFamily};
+use crate::{
+    ip::{parse_ipv4_addr, parse_ipv6_addr},
+    route::RouteProtocol,
+    AddressFamily,
+};
 
 const NDA_DST: u16 = 1;
 const NDA_LLADDR: u16 = 2;
@@ -42,6 +46,7 @@ pub enum NeighbourAttribute {
     LinkNetNsId(u32),
     SourceVni(u32),
     Protocol(RouteProtocol),
+    TunnelEndpoint(NeighbourAddress),
     Other(DefaultNla),
 }
 
@@ -50,6 +55,7 @@ impl Nla for NeighbourAttribute {
         match self {
             Self::LinkLocalAddress(bytes) => bytes.len(),
             Self::Destination(v) => v.buffer_len(),
+            Self::TunnelEndpoint(v) => v.buffer_len(),
             Self::CacheInfo(v) => v.buffer_len(),
             Self::Vlan(_) | Self::Port(_) => 2,
             Self::Protocol(v) => v.buffer_len(),
@@ -66,6 +72,7 @@ impl Nla for NeighbourAttribute {
     fn emit_value(&self, buffer: &mut [u8]) {
         match self {
             Self::Destination(v) => v.emit(buffer),
+            Self::TunnelEndpoint(v) => v.emit(buffer),
             Self::LinkLocalAddress(bytes) => {
                 buffer.copy_from_slice(bytes.as_slice())
             }
@@ -86,6 +93,7 @@ impl Nla for NeighbourAttribute {
     fn kind(&self) -> u16 {
         match self {
             Self::Destination(_) => NDA_DST,
+            Self::TunnelEndpoint(_) => NDA_DST,
             Self::LinkLocalAddress(_) => NDA_LLADDR,
             Self::CacheInfo(_) => NDA_CACHEINFO,
             Self::Probes(_) => NDA_PROBES,
@@ -112,10 +120,36 @@ impl<'a, T: AsRef<[u8]> + ?Sized>
     ) -> Result<Self, DecodeError> {
         let payload = buf.value();
         Ok(match buf.kind() {
-            NDA_DST => Self::Destination(
-                NeighbourAddress::parse_with_param(address_family, payload)
-                    .context(format!("invalid NDA_DST value {:?}", payload))?,
-            ),
+            NDA_DST => {
+                // In AF_BRIDGE context (VXLAN FDB), NDA_DST is a tunnel endpoint IP
+                // In other contexts (IP neighbors), it's a neighbor address
+                if address_family == AddressFamily::Bridge {
+                    // For tunnel endpoints in VXLAN FDB, detect address type from payload length
+                    let addr = match payload.len() {
+                        4 => {
+                            let ipv4 = parse_ipv4_addr(payload).context(
+                                "invalid tunnel endpoint IPv4 address",
+                            )?;
+                            NeighbourAddress::Inet(ipv4)
+                        }
+                        16 => {
+                            let ipv6 = parse_ipv6_addr(payload).context(
+                                "invalid tunnel endpoint IPv6 address",
+                            )?;
+                            NeighbourAddress::Inet6(ipv6)
+                        }
+                        _ => NeighbourAddress::Other(payload.to_vec()),
+                    };
+                    Self::TunnelEndpoint(addr)
+                } else {
+                    let addr = NeighbourAddress::parse_with_param(
+                        address_family,
+                        payload,
+                    )
+                    .context(format!("invalid NDA_DST value {:?}", payload))?;
+                    Self::Destination(addr)
+                }
+            }
             NDA_LLADDR => Self::LinkLocalAddress(payload.to_vec()),
             NDA_CACHEINFO => Self::CacheInfo(
                 NeighbourCacheInfo::parse(
