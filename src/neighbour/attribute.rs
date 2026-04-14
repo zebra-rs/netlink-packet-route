@@ -14,6 +14,8 @@ use crate::{
     route::RouteProtocol,
     AddressFamily,
 };
+use netlink_packet_utils::nla::{NlasIterator, NLA_F_NESTED};
+use netlink_packet_utils::parsers::parse_u8;
 
 const NDA_DST: u16 = 1;
 const NDA_LLADDR: u16 = 2;
@@ -28,8 +30,67 @@ const NDA_CONTROLLER: u16 = 9;
 const NDA_LINK_NETNSID: u16 = 10;
 const NDA_SRC_VNI: u16 = 11;
 const NDA_PROTOCOL: u16 = 12;
-// const NDA_NH_ID: u16 = 13;
-// const NDA_FDB_EXT_ATTRS: u16 = 14;
+const NDA_NH_ID: u16 = 13;
+const NDA_FDB_EXT_ATTRS: u16 = 14;
+
+// Nested attribute constants within NDA_FDB_EXT_ATTRS
+const NFEA_ACTIVITY_NOTIFY: u16 = 1;
+const NFEA_DONT_REFRESH: u16 = 2;
+
+/// Extended FDB attributes (nested within NDA_FDB_EXT_ATTRS)
+#[derive(Debug, PartialEq, Eq, Clone)]
+#[non_exhaustive]
+pub enum FdbExtAttr {
+    /// NFEA_ACTIVITY_NOTIFY — u8 flags for HW offload notification
+    ActivityNotify(u8),
+    /// NFEA_DONT_REFRESH — flag, zero-length, presence signals "don't refresh on traffic"
+    DontRefresh,
+    /// Unknown/other nested attribute
+    Other(DefaultNla),
+}
+
+impl Nla for FdbExtAttr {
+    fn value_len(&self) -> usize {
+        match self {
+            Self::ActivityNotify(_) => 1,
+            Self::DontRefresh => 0,
+            Self::Other(attr) => attr.value_len(),
+        }
+    }
+
+    fn kind(&self) -> u16 {
+        match self {
+            Self::ActivityNotify(_) => NFEA_ACTIVITY_NOTIFY,
+            Self::DontRefresh => NFEA_DONT_REFRESH,
+            Self::Other(attr) => attr.kind(),
+        }
+    }
+
+    fn emit_value(&self, buffer: &mut [u8]) {
+        match self {
+            Self::ActivityNotify(v) => buffer[0] = *v,
+            Self::DontRefresh => {}
+            Self::Other(attr) => attr.emit_value(buffer),
+        }
+    }
+}
+
+impl<'a, T: AsRef<[u8]> + ?Sized> Parseable<NlaBuffer<&'a T>> for FdbExtAttr {
+    fn parse(buf: &NlaBuffer<&'a T>) -> Result<Self, DecodeError> {
+        let payload = buf.value();
+        Ok(match buf.kind() {
+            NFEA_ACTIVITY_NOTIFY => Self::ActivityNotify(
+                parse_u8(payload)
+                    .context("invalid NFEA_ACTIVITY_NOTIFY value")?,
+            ),
+            NFEA_DONT_REFRESH => Self::DontRefresh,
+            _ => Self::Other(
+                DefaultNla::parse(buf)
+                    .context("invalid NFEA value (unknown type)")?,
+            ),
+        })
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
@@ -47,6 +108,8 @@ pub enum NeighbourAttribute {
     SourceVni(u32),
     Protocol(RouteProtocol),
     TunnelEndpoint(NeighbourAddress),
+    NhId(u32),
+    FdbExtAttrs(Vec<FdbExtAttr>),
     Other(DefaultNla),
 }
 
@@ -64,7 +127,9 @@ impl Nla for NeighbourAttribute {
             | Self::Controller(_)
             | Self::Vni(_)
             | Self::IfIndex(_)
-            | Self::SourceVni(_) => 4,
+            | Self::SourceVni(_)
+            | Self::NhId(_) => 4,
+            Self::FdbExtAttrs(attrs) => attrs.as_slice().buffer_len(),
             Self::Other(attr) => attr.value_len(),
         }
     }
@@ -84,8 +149,10 @@ impl Nla for NeighbourAttribute {
             | Self::Controller(value)
             | Self::Vni(value)
             | Self::IfIndex(value)
-            | Self::SourceVni(value) => NativeEndian::write_u32(buffer, *value),
+            | Self::SourceVni(value)
+            | Self::NhId(value) => NativeEndian::write_u32(buffer, *value),
             Self::Protocol(v) => v.emit(buffer),
+            Self::FdbExtAttrs(attrs) => attrs.as_slice().emit(buffer),
             Self::Other(attr) => attr.emit_value(buffer),
         }
     }
@@ -105,6 +172,8 @@ impl Nla for NeighbourAttribute {
             Self::LinkNetNsId(_) => NDA_LINK_NETNSID,
             Self::SourceVni(_) => NDA_SRC_VNI,
             Self::Protocol(_) => NDA_PROTOCOL,
+            Self::NhId(_) => NDA_NH_ID,
+            Self::FdbExtAttrs(_) => NDA_FDB_EXT_ATTRS | NLA_F_NESTED,
             Self::Other(nla) => nla.kind(),
         }
     }
@@ -186,6 +255,19 @@ impl<'a, T: AsRef<[u8]> + ?Sized>
                 Self::Protocol(RouteProtocol::parse(payload).context(
                     format!("invalid NDA_PROTOCOL value {:?}", payload),
                 )?)
+            }
+            NDA_NH_ID => Self::NhId(
+                parse_u32(payload)
+                    .context(format!("invalid NDA_NH_ID value {payload:?}"))?,
+            ),
+            NDA_FDB_EXT_ATTRS => {
+                let mut attrs = Vec::new();
+                let err = "failed to parse NDA_FDB_EXT_ATTRS";
+                for nla in NlasIterator::new(payload) {
+                    let nla_buf = nla.context(err)?;
+                    attrs.push(FdbExtAttr::parse(&nla_buf).context(err)?);
+                }
+                Self::FdbExtAttrs(attrs)
             }
             _ => Self::Other(
                 DefaultNla::parse(buf)
