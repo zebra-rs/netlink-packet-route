@@ -236,6 +236,8 @@ pub struct VecIpv6SrHdr(pub Vec<Ipv6SrHdr>);
 const SEG6_IPTUN_MODE_INLINE: u32 = 0;
 const SEG6_IPTUN_MODE_ENCAP: u32 = 1;
 const SEG6_IPTUN_MODE_L2ENCAP: u32 = 2;
+const SEG6_IPTUN_MODE_ENCAP_RED: u32 = 3;
+const SEG6_IPTUN_MODE_L2ENCAP_RED: u32 = 4;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default, Copy)]
 #[non_exhaustive]
@@ -244,6 +246,8 @@ pub enum Seg6IpTunnelMode {
     Inline,
     Encap,
     L2Encap,
+    EncapRed,
+    L2EncapRed,
     Other(u32),
 }
 
@@ -253,6 +257,8 @@ impl From<u32> for Seg6IpTunnelMode {
             SEG6_IPTUN_MODE_INLINE => Self::Inline,
             SEG6_IPTUN_MODE_ENCAP => Self::Encap,
             SEG6_IPTUN_MODE_L2ENCAP => Self::L2Encap,
+            SEG6_IPTUN_MODE_ENCAP_RED => Self::EncapRed,
+            SEG6_IPTUN_MODE_L2ENCAP_RED => Self::L2EncapRed,
             _ => Self::Other(d),
         }
     }
@@ -264,6 +270,8 @@ impl From<Seg6IpTunnelMode> for u32 {
             Seg6IpTunnelMode::Inline => SEG6_IPTUN_MODE_INLINE,
             Seg6IpTunnelMode::Encap => SEG6_IPTUN_MODE_ENCAP,
             Seg6IpTunnelMode::L2Encap => SEG6_IPTUN_MODE_L2ENCAP,
+            Seg6IpTunnelMode::EncapRed => SEG6_IPTUN_MODE_ENCAP_RED,
+            Seg6IpTunnelMode::L2EncapRed => SEG6_IPTUN_MODE_L2ENCAP_RED,
             Seg6IpTunnelMode::Other(d) => d,
         }
     }
