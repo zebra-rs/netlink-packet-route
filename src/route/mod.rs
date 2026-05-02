@@ -40,6 +40,9 @@ pub use self::seg6::{
     Ipv6SrHdr, RouteSeg6IpTunnel, Seg6IpTunnelEncap, Seg6IpTunnelMode,
     VecIpv6SrHdr,
 };
-pub use self::seg6local::RouteSeg6LocalIpTunnel;
+pub use self::seg6local::{
+    RouteSeg6LocalIpTunnel, Seg6LocalAction, Seg6LocalCounters,
+    Seg6LocalFlavorOps, Seg6LocalFlavors,
+};
 pub use self::via::{RouteVia, RouteViaBuffer};
 pub use flags::RouteFlags;
