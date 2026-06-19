@@ -40,8 +40,14 @@ use netlink_packet_utils::nla::NlasIterator;
 // Nesting kinds. Both inner containers happen to use kind 1.
 const MDBA_MDB_ENTRY: u16 = 1;
 const MDBA_MDB_ENTRY_INFO: u16 = 1;
-// Per-entry extended attributes (under MDBA_MDB_ENTRY_INFO).
-const MDBA_MDB_EATTR_SOURCE: u16 = 2;
+// Per-entry extended attributes (under MDBA_MDB_ENTRY_INFO), in the
+// dump/notification `MDBA_MDB_EATTR_*` numbering from linux/if_bridge.h
+// (UNSPEC, TIMER, SRC_LIST, GROUP_MODE, SOURCE, RTPROT, DST, DST_PORT,
+// VNI, IFINDEX, SRC_VNI) — distinct from the SET-side `MDBE_ATTR_*`.
+const MDBA_MDB_EATTR_SOURCE: u16 = 4;
+const MDBA_MDB_EATTR_DST: u16 = 6;
+const MDBA_MDB_EATTR_VNI: u16 = 8;
+const MDBA_MDB_EATTR_SRC_VNI: u16 = 10;
 
 // addr.proto values (network byte order on the wire).
 const ETH_P_IP: u16 = 0x0800;
@@ -74,6 +80,13 @@ pub struct MdbEntry {
     pub group: MdbGroup,
     /// Source address for an `(S,G)` entry; `None` for `(*,G)`.
     pub source: Option<IpAddr>,
+    /// Remote destination (VXLAN MDB `dst`) when the entry was
+    /// programmed toward a specific VTEP; `None` for a plain bridge MDB
+    /// entry. Read back from `MDBA_MDB_EATTR_DST`.
+    pub dst: Option<IpAddr>,
+    /// VNI carried by a VXLAN MDB entry (`MDBA_MDB_EATTR_VNI` /
+    /// `SRC_VNI`); `None` for a plain bridge MDB entry.
+    pub vni: Option<u32>,
 }
 
 /// Decode every entry from a raw `MDBA_MDB` attribute payload. Malformed
@@ -120,21 +133,22 @@ fn parse_entry_info(value: &[u8]) -> Option<MdbEntry> {
         }
     };
 
-    // The (S) of an (S,G) entry rides in MDBA_MDB_EATTR_SOURCE after the
-    // fixed struct.
+    // Per-entry eattrs after the fixed struct: the (S) of an (S,G)
+    // entry, and — for a VXLAN MDB entry — the remote dst + VNI.
     let mut source = None;
+    let mut dst = None;
+    let mut vni = None;
     for eattr in NlasIterator::new(&value[BR_MDB_ENTRY_LEN..]) {
         let Ok(eattr) = eattr else { continue };
-        if eattr.kind() == MDBA_MDB_EATTR_SOURCE {
-            source = match eattr.value().len() {
-                4 => Some(IpAddr::V4(Ipv4Addr::from(
-                    <[u8; 4]>::try_from(eattr.value()).ok()?,
-                ))),
-                16 => Some(IpAddr::V6(Ipv6Addr::from(
-                    <[u8; 16]>::try_from(eattr.value()).ok()?,
-                ))),
-                _ => None,
-            };
+        match eattr.kind() {
+            MDBA_MDB_EATTR_SOURCE => source = ip_from_nla(eattr.value()),
+            MDBA_MDB_EATTR_DST => dst = ip_from_nla(eattr.value()),
+            MDBA_MDB_EATTR_VNI | MDBA_MDB_EATTR_SRC_VNI => {
+                if let Ok(b) = <[u8; 4]>::try_from(eattr.value()) {
+                    vni = Some(u32::from_ne_bytes(b));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -145,7 +159,20 @@ fn parse_entry_info(value: &[u8]) -> Option<MdbEntry> {
         vid,
         group,
         source,
+        dst,
+        vni,
     })
+}
+
+/// Decode a 4-octet IPv4 / 16-octet IPv6 address from an eattr value.
+fn ip_from_nla(value: &[u8]) -> Option<IpAddr> {
+    match value.len() {
+        4 => Some(IpAddr::V4(Ipv4Addr::from(<[u8; 4]>::try_from(value).ok()?))),
+        16 => Some(IpAddr::V6(Ipv6Addr::from(
+            <[u8; 16]>::try_from(value).ok()?,
+        ))),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -215,6 +242,29 @@ mod tests {
             entries[0].source,
             Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)))
         );
+    }
+
+    // VXLAN MDB read-back: an (S,G) entry with remote dst + VNI. Uses
+    // hard-coded kernel kind numbers (SOURCE=4, DST=6, VNI=8) so the
+    // test guards the constants against linux/if_bridge.h rather than
+    // tautologically reusing them.
+    #[test]
+    fn vxlan_mdb_dst_vni_readback() {
+        let mut s = vec![0u8; BR_MDB_ENTRY_LEN];
+        s[0..4].copy_from_slice(&5u32.to_ne_bytes());
+        s[8..12].copy_from_slice(&Ipv4Addr::new(232, 0, 0, 9).octets());
+        s[24..26].copy_from_slice(&ETH_P_IP.to_be_bytes());
+        s.extend_from_slice(&nla(4, &Ipv4Addr::new(192, 0, 2, 1).octets())); // SOURCE
+        s.extend_from_slice(&nla(6, &Ipv4Addr::new(10, 0, 0, 2).octets())); // DST
+        s.extend_from_slice(&nla(8, &50u32.to_ne_bytes())); // VNI
+        let entries = parse_mdb_entries(&wrap(&[s]));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].source,
+            Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)))
+        );
+        assert_eq!(entries[0].dst, Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))));
+        assert_eq!(entries[0].vni, Some(50));
     }
 
     #[test]
