@@ -4,13 +4,29 @@ use netlink_packet_utils::{
     DecodeError, Emitable, Parseable, ParseableParametrized,
 };
 
-use super::{MdbAttribute, MdbHeader, MdbMessageBuffer};
+use super::{parse_mdb_entries, MdbAttribute, MdbEntry, MdbHeader, MdbMessageBuffer};
 use crate::AddressFamily;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MdbMessage {
     pub header: MdbHeader,
     pub attributes: Vec<MdbAttribute>,
+}
+
+impl MdbMessage {
+    /// Decode every multicast database entry carried in this message's
+    /// `MDBA_MDB` attribute(s). `self.header.index` is the bridge
+    /// ifindex the entries belong to.
+    pub fn entries(&self) -> Vec<MdbEntry> {
+        self.attributes
+            .iter()
+            .filter_map(|attr| match attr {
+                MdbAttribute::MdbEntry(raw) => Some(parse_mdb_entries(raw)),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
 }
 
 impl<'a, T: AsRef<[u8]> + 'a> Parseable<MdbMessageBuffer<&'a T>>
