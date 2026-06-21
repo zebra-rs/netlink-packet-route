@@ -11,6 +11,7 @@ use netlink_packet_utils::{
 use crate::mdb::{MdbMessage, MdbMessageBuffer};
 use crate::nexthop::{NexthopMessage, NexthopMessageBuffer};
 use crate::tc::{TcActionMessage, TcActionMessageBuffer};
+use crate::tunnel::{TunnelMessage, TunnelMessageBuffer};
 use crate::{
     address::{AddressHeader, AddressMessage, AddressMessageBuffer},
     link::{LinkMessage, LinkMessageBuffer},
@@ -69,6 +70,9 @@ const RTM_SETNEIGHTBL: u16 = 67;
 const RTM_NEWMDB: u16 = 84;
 const RTM_DELMDB: u16 = 85;
 const RTM_GETMDB: u16 = 86;
+const RTM_NEWTUNNEL: u16 = 120;
+const RTM_DELTUNNEL: u16 = 121;
+const RTM_GETTUNNEL: u16 = 122;
 const RTM_NEWNSID: u16 = 88;
 const RTM_DELNSID: u16 = 89;
 const RTM_GETNSID: u16 = 90;
@@ -359,6 +363,22 @@ impl<'a, T: AsRef<[u8]> + ?Sized>
                 }
             }
 
+            // Tunnel (VXLAN VNI filter) messages
+            RTM_NEWTUNNEL | RTM_DELTUNNEL | RTM_GETTUNNEL => {
+                let err = "invalid tunnel message";
+                let msg = TunnelMessage::parse(
+                    &TunnelMessageBuffer::new_checked(&buf.inner())
+                        .context(err)?,
+                )
+                .context(err)?;
+                match message_type {
+                    RTM_NEWTUNNEL => RouteNetlinkMessage::NewTunnel(msg),
+                    RTM_DELTUNNEL => RouteNetlinkMessage::DelTunnel(msg),
+                    RTM_GETTUNNEL => RouteNetlinkMessage::GetTunnel(msg),
+                    _ => unreachable!(),
+                }
+            }
+
             _ => {
                 return Err(
                     format!("Unknown message type: {message_type}").into()
@@ -409,6 +429,9 @@ pub enum RouteNetlinkMessage {
     NewMdb(MdbMessage),
     DelMdb(MdbMessage),
     GetMdb(MdbMessage),
+    NewTunnel(TunnelMessage),
+    DelTunnel(TunnelMessage),
+    GetTunnel(TunnelMessage),
     NewNexthop(NexthopMessage),
     DelNexthop(NexthopMessage),
     GetNexthop(NexthopMessage),
@@ -643,6 +666,9 @@ impl RouteNetlinkMessage {
             NewMdb(_) => RTM_NEWMDB,
             DelMdb(_) => RTM_DELMDB,
             GetMdb(_) => RTM_GETMDB,
+            NewTunnel(_) => RTM_NEWTUNNEL,
+            DelTunnel(_) => RTM_DELTUNNEL,
+            GetTunnel(_) => RTM_GETTUNNEL,
         }
     }
 }
@@ -720,6 +746,11 @@ impl Emitable for RouteNetlinkMessage {
             | DelMdb(ref msg)
             | GetMdb(ref msg)
             => msg.buffer_len(),
+
+            | NewTunnel(ref msg)
+            | DelTunnel(ref msg)
+            | GetTunnel(ref msg)
+            => msg.buffer_len(),
 }
     }
 
@@ -794,6 +825,11 @@ impl Emitable for RouteNetlinkMessage {
             | NewMdb(ref msg)
             | DelMdb(ref msg)
             | GetMdb(ref msg)
+            => msg.emit(buffer),
+
+            | NewTunnel(ref msg)
+            | DelTunnel(ref msg)
+            | GetTunnel(ref msg)
             => msg.emit(buffer),
 }
     }

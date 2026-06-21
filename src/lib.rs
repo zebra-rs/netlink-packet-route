@@ -11,6 +11,7 @@ pub mod prefix;
 pub mod route;
 pub mod rule;
 pub mod tc;
+pub mod tunnel;
 
 mod message;
 #[cfg(test)]
