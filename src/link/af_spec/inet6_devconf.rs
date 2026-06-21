@@ -6,7 +6,7 @@ use netlink_packet_utils::{
 };
 
 // The DEVCONF_MAX will increase when kernel add more DEVCONF
-const DEVCONF_MAX: usize = 59;
+const DEVCONF_MAX: usize = 60;
 pub(crate) const LINK_INET6_DEV_CONF_LEN: usize = DEVCONF_MAX * 4;
 
 buffer!(Inet6DevConfBuffer(LINK_INET6_DEV_CONF_LEN) {
@@ -69,6 +69,7 @@ buffer!(Inet6DevConfBuffer(LINK_INET6_DEV_CONF_LEN) {
     ndisc_evict_nocarrier: (i32, 224..228),
     accept_untracked_na: (i32, 228..232),
     accept_ra_min_lft: (i32, 232..236),
+    force_forwarding: (i32, 236..240),
 });
 
 impl<T: AsRef<[u8]>> Parseable<Inet6DevConfBuffer<T>> for Inet6DevConf {
@@ -135,6 +136,7 @@ impl<T: AsRef<[u8]>> Parseable<Inet6DevConfBuffer<T>> for Inet6DevConf {
             ndisc_evict_nocarrier: buf.ndisc_evict_nocarrier(),
             accept_untracked_na: buf.accept_untracked_na(),
             accept_ra_min_lft: buf.accept_ra_min_lft(),
+            force_forwarding: buf.force_forwarding(),
         })
     }
 }
@@ -213,6 +215,7 @@ impl Emitable for Inet6DevConf {
         buffer.set_ndisc_evict_nocarrier(self.ndisc_evict_nocarrier);
         buffer.set_accept_untracked_na(self.accept_untracked_na);
         buffer.set_accept_ra_min_lft(self.accept_ra_min_lft);
+        buffer.set_force_forwarding(self.force_forwarding);
     }
 }
 
@@ -278,4 +281,5 @@ pub struct Inet6DevConf {
     pub ndisc_evict_nocarrier: i32,
     pub accept_untracked_na: i32,
     pub accept_ra_min_lft: i32,
+    pub force_forwarding: i32,
 }

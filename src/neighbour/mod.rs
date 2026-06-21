@@ -12,7 +12,7 @@ mod state;
 mod tests;
 
 pub use self::address::NeighbourAddress;
-pub use self::attribute::NeighbourAttribute;
+pub use self::attribute::{FdbExtAttr, NeighbourAttribute};
 pub use self::cache_info::{NeighbourCacheInfo, NeighbourCacheInfoBuffer};
 pub use self::flags::NeighbourFlags;
 pub use self::header::{NeighbourHeader, NeighbourMessageBuffer};

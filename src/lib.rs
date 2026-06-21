@@ -2,13 +2,16 @@
 
 pub mod address;
 pub mod link;
+pub mod mdb;
 pub mod neighbour;
 pub mod neighbour_table;
+pub mod nexthop;
 pub mod nsid;
 pub mod prefix;
 pub mod route;
 pub mod rule;
 pub mod tc;
+pub mod tunnel;
 
 mod message;
 #[cfg(test)]

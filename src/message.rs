@@ -8,7 +8,10 @@ use netlink_packet_utils::{
     DecodeError, Emitable, Parseable, ParseableParametrized,
 };
 
+use crate::mdb::{MdbMessage, MdbMessageBuffer};
+use crate::nexthop::{NexthopMessage, NexthopMessageBuffer};
 use crate::tc::{TcActionMessage, TcActionMessageBuffer};
+use crate::tunnel::{TunnelMessage, TunnelMessageBuffer};
 use crate::{
     address::{AddressHeader, AddressMessage, AddressMessageBuffer},
     link::{LinkMessage, LinkMessageBuffer},
@@ -64,9 +67,12 @@ const RTM_SETNEIGHTBL: u16 = 67;
 // const RTM_NEWNETCONF: u16 = 80;
 // const RTM_DELNETCONF: u16 = 81;
 // const RTM_GETNETCONF: u16 = 82;
-// const RTM_NEWMDB: u16 = 84;
-// const RTM_DELMDB: u16 = 85;
-// const RTM_GETMDB: u16 = 86;
+const RTM_NEWMDB: u16 = 84;
+const RTM_DELMDB: u16 = 85;
+const RTM_GETMDB: u16 = 86;
+const RTM_NEWTUNNEL: u16 = 120;
+const RTM_DELTUNNEL: u16 = 121;
+const RTM_GETTUNNEL: u16 = 122;
 const RTM_NEWNSID: u16 = 88;
 const RTM_DELNSID: u16 = 89;
 const RTM_GETNSID: u16 = 90;
@@ -76,6 +82,9 @@ const RTM_GETNSID: u16 = 90;
 const RTM_NEWCHAIN: u16 = 100;
 const RTM_DELCHAIN: u16 = 101;
 const RTM_GETCHAIN: u16 = 102;
+const RTM_NEWNEXTHOP: u16 = 104;
+const RTM_DELNEXTHOP: u16 = 105;
+const RTM_GETNEXTHOP: u16 = 106;
 const RTM_NEWLINKPROP: u16 = 108;
 const RTM_DELLINKPROP: u16 = 109;
 
@@ -322,6 +331,54 @@ impl<'a, T: AsRef<[u8]> + ?Sized>
                 }
             }
 
+            // Nexthop Messages
+            RTM_NEWNEXTHOP | RTM_DELNEXTHOP | RTM_GETNEXTHOP => {
+                let err = "invalid nexthop message";
+                let msg = NexthopMessage::parse(
+                    &NexthopMessageBuffer::new_checked(&buf.inner())
+                        .context(err)?,
+                )
+                .context(err)?;
+                match message_type {
+                    RTM_NEWNEXTHOP => RouteNetlinkMessage::NewNexthop(msg),
+                    RTM_DELNEXTHOP => RouteNetlinkMessage::DelNexthop(msg),
+                    RTM_GETNEXTHOP => RouteNetlinkMessage::GetNexthop(msg),
+                    _ => unreachable!(),
+                }
+            }
+
+            // MDB Messages
+            RTM_NEWMDB | RTM_DELMDB | RTM_GETMDB => {
+                let err = "invalid MDB message";
+                let msg = MdbMessage::parse(
+                    &MdbMessageBuffer::new_checked(&buf.inner())
+                        .context(err)?,
+                )
+                .context(err)?;
+                match message_type {
+                    RTM_NEWMDB => RouteNetlinkMessage::NewMdb(msg),
+                    RTM_DELMDB => RouteNetlinkMessage::DelMdb(msg),
+                    RTM_GETMDB => RouteNetlinkMessage::GetMdb(msg),
+                    _ => unreachable!(),
+                }
+            }
+
+            // Tunnel (VXLAN VNI filter) messages
+            RTM_NEWTUNNEL | RTM_DELTUNNEL | RTM_GETTUNNEL => {
+                let err = "invalid tunnel message";
+                let msg = TunnelMessage::parse(
+                    &TunnelMessageBuffer::new_checked(&buf.inner())
+                        .context(err)?,
+                )
+                .context(err)?;
+                match message_type {
+                    RTM_NEWTUNNEL => RouteNetlinkMessage::NewTunnel(msg),
+                    RTM_DELTUNNEL => RouteNetlinkMessage::DelTunnel(msg),
+                    RTM_GETTUNNEL => RouteNetlinkMessage::GetTunnel(msg),
+                    _ => unreachable!(),
+                }
+            }
+
             _ => {
                 return Err(
                     format!("Unknown message type: {message_type}").into()
@@ -369,6 +426,15 @@ pub enum RouteNetlinkMessage {
     NewTrafficChain(TcMessage),
     DelTrafficChain(TcMessage),
     GetTrafficChain(TcMessage),
+    NewMdb(MdbMessage),
+    DelMdb(MdbMessage),
+    GetMdb(MdbMessage),
+    NewTunnel(TunnelMessage),
+    DelTunnel(TunnelMessage),
+    GetTunnel(TunnelMessage),
+    NewNexthop(NexthopMessage),
+    DelNexthop(NexthopMessage),
+    GetNexthop(NexthopMessage),
     NewNsId(NsidMessage),
     DelNsId(NsidMessage),
     GetNsId(NsidMessage),
@@ -526,6 +592,30 @@ impl RouteNetlinkMessage {
         matches!(self, RouteNetlinkMessage::DelRule(_))
     }
 
+    pub fn is_get_nexthop(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::GetNexthop(_))
+    }
+
+    pub fn is_new_nexthop(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::NewNexthop(_))
+    }
+
+    pub fn is_del_nexthop(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::DelNexthop(_))
+    }
+
+    pub fn is_new_mdb(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::NewMdb(_))
+    }
+
+    pub fn is_del_mdb(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::DelMdb(_))
+    }
+
+    pub fn is_get_mdb(&self) -> bool {
+        matches!(self, RouteNetlinkMessage::GetMdb(_))
+    }
+
     pub fn message_type(&self) -> u16 {
         use self::RouteNetlinkMessage::*;
 
@@ -570,6 +660,15 @@ impl RouteNetlinkMessage {
             GetRule(_) => RTM_GETRULE,
             NewRule(_) => RTM_NEWRULE,
             DelRule(_) => RTM_DELRULE,
+            NewNexthop(_) => RTM_NEWNEXTHOP,
+            DelNexthop(_) => RTM_DELNEXTHOP,
+            GetNexthop(_) => RTM_GETNEXTHOP,
+            NewMdb(_) => RTM_NEWMDB,
+            DelMdb(_) => RTM_DELMDB,
+            GetMdb(_) => RTM_GETMDB,
+            NewTunnel(_) => RTM_NEWTUNNEL,
+            DelTunnel(_) => RTM_DELTUNNEL,
+            GetTunnel(_) => RTM_GETTUNNEL,
         }
     }
 }
@@ -637,7 +736,22 @@ impl Emitable for RouteNetlinkMessage {
             | DelTrafficAction(ref msg)
             | GetTrafficAction(ref msg)
             => msg.buffer_len(),
-        }
+
+            | NewNexthop(ref msg)
+            | DelNexthop(ref msg)
+            | GetNexthop(ref msg)
+            => msg.buffer_len(),
+
+            | NewMdb(ref msg)
+            | DelMdb(ref msg)
+            | GetMdb(ref msg)
+            => msg.buffer_len(),
+
+            | NewTunnel(ref msg)
+            | DelTunnel(ref msg)
+            | GetTunnel(ref msg)
+            => msg.buffer_len(),
+}
     }
 
     #[rustfmt::skip]
@@ -702,7 +816,22 @@ impl Emitable for RouteNetlinkMessage {
             | DelTrafficAction(ref msg)
             | GetTrafficAction(ref msg)
             => msg.emit(buffer),
-        }
+
+            | NewNexthop(ref msg)
+            | DelNexthop(ref msg)
+            | GetNexthop(ref msg)
+            => msg.emit(buffer),
+
+            | NewMdb(ref msg)
+            | DelMdb(ref msg)
+            | GetMdb(ref msg)
+            => msg.emit(buffer),
+
+            | NewTunnel(ref msg)
+            | DelTunnel(ref msg)
+            | GetTunnel(ref msg)
+            => msg.emit(buffer),
+}
     }
 }
 
